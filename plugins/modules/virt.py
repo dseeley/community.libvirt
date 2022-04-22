@@ -119,7 +119,7 @@ VIRT_SUCCESS = 0
 VIRT_UNAVAILABLE = 2
 
 ALL_COMMANDS = []
-VM_COMMANDS = ['create', 'define', 'destroy', 'get_xml', 'pause', 'shutdown', 'status', 'start', 'stop', 'undefine', 'unpause']
+VM_COMMANDS = ['create', 'define', 'destroy', 'get_xml', 'pause', 'shutdown', 'status', 'start', 'stop', 'undefine', 'unpause', 'get_guest_agent_info', 'attach_device', 'detach_device', 'update_device', 'set_metadata']
 HOST_COMMANDS = ['freemem', 'info', 'list_vms', 'nodeinfo', 'virttype']
 ALL_COMMANDS.extend(VM_COMMANDS)
 ALL_COMMANDS.extend(HOST_COMMANDS)
@@ -211,8 +211,9 @@ class LibvirtConnection(object):
     def destroy(self, vmid):
         return self.find_vm(vmid).destroy()
 
-    def undefine(self, vmid):
-        return self.find_vm(vmid).undefine()
+    def undefine(self, vmid, flags):
+        flags = 0 if not flags else flags                   # If the user hasn't set flags, set them to default (0).  Cannot set this to 0 by default, or we can't tell whether the user has purposefully set it to 0.
+        return self.find_vm(vmid).undefineFlags(flags)
 
     def get_status2(self, vm):
         state = vm.info()[0]
@@ -242,6 +243,85 @@ class LibvirtConnection(object):
 
     def getFreeMemory(self):
         return self.conn.getFreeMemory()
+
+    # This needs the guest powered on, 'qemu-guest-agent' installed and the org.qemu.guest_agent.0 channel configured.
+    def get_guestInfo(self, vmid):
+        vm = self.conn.lookupByName(vmid)
+        res = {'changed:': False, 'guest_agent_info': {}}
+
+        try:
+            domain_guestInfo = vm.guestInfo(types=0)
+        except Exception as e:
+            domain_guestInfo = {"Error": str(e)}
+        finally:
+            res['guest_agent_info'].update({'guestInfo': domain_guestInfo})
+
+        try:
+            domain_interfaceAddresses = vm.interfaceAddresses(source=libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT)
+        except Exception as e:
+            domain_interfaceAddresses = {"Error": str(e)}
+        finally:
+            res['guest_agent_info'].update({'interfaceAddresses': domain_interfaceAddresses})
+
+        return res
+
+    def attach_device(self, vmid, xml, flags):
+        vm = self.conn.lookupByName(vmid)
+        flags = (libvirt.VIR_DOMAIN_AFFECT_LIVE | libvirt.VIR_DOMAIN_AFFECT_CONFIG) if not flags else flags
+        if self.get_status2(vm) != 'running':
+            flags &= ~libvirt.VIR_DOMAIN_AFFECT_LIVE
+
+        try:
+            attach_res = vm.attachDeviceFlags(xml, flags)
+            return {'changed': True, 'attach_device': {'rc': attach_res}}
+        except libvirtError:
+            raise
+
+    def detach_device(self, vmid, xml, flags):
+        vm = self.conn.lookupByName(vmid)
+        flags = (libvirt.VIR_DOMAIN_DEVICE_MODIFY_LIVE | libvirt.VIR_DOMAIN_DEVICE_MODIFY_CONFIG) if not flags else flags
+        if self.get_status2(vm) != 'running':
+            flags &= ~libvirt.VIR_DOMAIN_DEVICE_MODIFY_LIVE
+
+        try:
+            detach_res = vm.detachDeviceFlags(xml, flags)
+            return {'changed': True, 'detach_device': {'rc': detach_res}}
+        except libvirtError as e:
+            if e.get_error_code() == libvirt.VIR_ERR_DEVICE_MISSING:
+                return {'changed': False, 'detach_device': {'Error': 'libvirt.VIR_ERR_DEVICE_MISSING: %s' % (e.get_error_message())}}
+            else:
+                raise
+
+    def update_device(self, vmid, xml, flags):
+        vm = self.conn.lookupByName(vmid)
+        flags = (libvirt.VIR_DOMAIN_DEVICE_MODIFY_LIVE | libvirt.VIR_DOMAIN_DEVICE_MODIFY_CONFIG) if not flags else flags
+        if self.get_status2(vm) != 'running':
+            flags &= ~libvirt.VIR_DOMAIN_DEVICE_MODIFY_LIVE
+
+        try:
+            detach_res = vm.updateDeviceFlags(xml, flags)
+            return {'changed': True, 'update_device': detach_res}
+        except libvirtError as e:
+            if e.get_error_code() == libvirt.VIR_ERR_INVALID_ARG:
+                return {'changed': False, 'detach_device': {'Error': 'libvirt.VIR_ERR_INVALID_ARG: %s' % (e.get_error_message())}}
+            else:
+                raise
+
+    def set_metadata(self, vmid, xml, params, flags):
+        vm = self.conn.lookupByName(vmid)
+        flags = (libvirt.VIR_DOMAIN_AFFECT_LIVE | libvirt.VIR_DOMAIN_AFFECT_CONFIG) if not flags else flags
+        if self.get_status2(vm) != 'running':
+            flags &= ~libvirt.VIR_DOMAIN_AFFECT_LIVE
+
+        try:
+            set_metadata_res = vm.setMetadata(libvirt.VIR_DOMAIN_METADATA_ELEMENT,
+                                              xml,
+                                              (params['key'] if (params and 'key' in params) else None),
+                                              (params['uri'] if (params and 'uri' in params) else None),
+                                              flags)
+            return {'changed': True, 'set_metadata': set_metadata_res}
+        except libvirtError:
+            raise
 
     def get_autostart(self, vmid):
         vm = self.conn.lookupByName(vmid)
@@ -380,11 +460,13 @@ class Virt(object):
         self.__get_conn()
         return self.conn.destroy(vmid)
 
-    def undefine(self, vmid):
-        """ Stop a domain, and then wipe it from the face of the earth.  (delete disk/config file) """
-
+    def undefine(self, vmid, flags):
+        """
+        Stop a domain, and then wipe it from the face of the earth.  (delete disk/config file).
+        Accept flags, e.g. libvirt.VIR_DOMAIN_UNDEFINE_NVRAM to allow deletion of an EFI-based vm.
+        """
         self.__get_conn()
-        return self.conn.undefine(vmid)
+        return self.conn.undefine(vmid, flags)
 
     def status(self, vmid):
         """
@@ -418,6 +500,42 @@ class Virt(object):
         self.__get_conn()
         return self.conn.get_MaxMemory(vmid)
 
+    def get_guest_agent_info(self, vmid):
+        """
+        Gets the guest info from the agent
+        """
+
+        self.__get_conn()
+        return self.conn.get_guestInfo(vmid)
+
+    def attach_device(self, vmid, xml, flags):
+        """
+        Attach a device with the given xml to a named guest
+        """
+        self.__get_conn()
+        return self.conn.attach_device(vmid, xml, flags)
+
+    def detach_device(self, vmid, xml, flags):
+        """
+        Detach a device with the given xml from a named guest
+        """
+        self.__get_conn()
+        return self.conn.detach_device(vmid, xml, flags)
+
+    def update_device(self, vmid, xml, flags):
+        """
+        Update a device with the given xml
+        """
+        self.__get_conn()
+        return self.conn.update_device(vmid, xml, flags)
+
+    def set_metadata(self, vmid, xml, params, flags):
+        """
+        Set the metadata of the named guest
+        """
+        self.__get_conn()
+        return self.conn.set_metadata(vmid, xml, params, flags)
+
     def define(self, xml):
         """
         Define a guest with the given xml
@@ -427,13 +545,14 @@ class Virt(object):
 
 
 def core(module):
-
     state = module.params.get('state', None)
     autostart = module.params.get('autostart', None)
     guest = module.params.get('name', None)
     command = module.params.get('command', None)
     uri = module.params.get('uri', None)
     xml = module.params.get('xml', None)
+    flags = module.params.get('flags', None)
+    params = module.params.get('params', None)
 
     v = Virt(uri, module)
     res = dict()
@@ -524,6 +643,19 @@ def core(module):
                 if autostart is not None and v.autostart(domain_name, autostart):
                     res = {'changed': True, 'change_reason': 'autostart'}
 
+            elif command == 'undefine':
+                res = {command: getattr(v, command)(guest, flags)}
+
+            elif command in ['attach_device', 'detach_device', 'update_device']:
+                if not xml and guest:
+                    module.fail_json(msg="attach_device, update_device and detach_device require 'xml' and 'name' (or 'guest') arguments")
+                res = {command: getattr(v, command)(guest, xml, flags)}
+
+            elif command == 'set_metadata':
+                if not xml and guest:
+                    module.fail_json(msg="set_metadata requires 'xml' and 'name' (or 'guest') arguments")
+                res = {command: getattr(v, command)(guest, xml, params, flags)}
+
             elif not guest:
                 module.fail_json(msg="%s requires 1 argument: guest" % command)
             else:
@@ -554,6 +686,8 @@ def main():
             command=dict(type='str', choices=ALL_COMMANDS),
             uri=dict(type='str', default='qemu:///system'),
             xml=dict(type='str'),
+            flags=dict(type='int'),
+            params=dict(type='dict')
         ),
     )
 
