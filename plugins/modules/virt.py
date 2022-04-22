@@ -119,7 +119,8 @@ VIRT_SUCCESS = 0
 VIRT_UNAVAILABLE = 2
 
 ALL_COMMANDS = []
-VM_COMMANDS = ['create', 'define', 'destroy', 'get_xml', 'pause', 'shutdown', 'status', 'start', 'stop', 'undefine', 'unpause', 'get_guest_agent_info', 'attach_device', 'detach_device', 'update_device', 'set_metadata']
+VM_COMMANDS = ['create','define', 'destroy', 'get_xml', 'pause', 'shutdown', 'status', 'start', 'stop', 'undefine', 'unpause',
+               'get_guest_agent_info', 'attach_device', 'detach_device', 'update_device', 'set_metadata']
 HOST_COMMANDS = ['freemem', 'info', 'list_vms', 'nodeinfo', 'virttype']
 ALL_COMMANDS.extend(VM_COMMANDS)
 ALL_COMMANDS.extend(HOST_COMMANDS)
@@ -212,7 +213,8 @@ class LibvirtConnection(object):
         return self.find_vm(vmid).destroy()
 
     def undefine(self, vmid, flags):
-        flags = 0 if not flags else flags                   # If the user hasn't set flags, set them to default (0).  Cannot set this to 0 by default, or we can't tell whether the user has purposefully set it to 0.
+        # If the user hasn't set flags, set them to default (0).  Can't set this to 0 by default, or we won't know whether the user has purposefully set it to 0
+        flags = 0 if not flags else flags
         return self.find_vm(vmid).undefineFlags(flags)
 
     def get_status2(self, vm):
