@@ -1,4 +1,4 @@
-namespace: community
+namespace: dseeley
 name: libvirt
 version: 1.1.0
 readme: README.md
@@ -11,7 +11,7 @@ tags:
   - libvirt
   - lxc
   - qemu
-repository: https://github.com/ansible-collections/community.libvirt
+repository: https://github.com/dseeley/community.libvirt
 documentation: https://docs.ansible.com/ansible/latest/collections/community/libvirt/index.html
 homepage: https://github.com/ansible-collections/community.libvirt
 issues: https://github.com/ansible-collections/community.libvirt/issues
