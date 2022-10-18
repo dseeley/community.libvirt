@@ -364,14 +364,14 @@ class LibvirtConnection(object):
             else:
                 raise
 
-    def set_metadata(self, vmid, xml, metadata_params, flag):
+    def set_metadata(self, vmid, xml, other_params, flag):
         vm = self.conn.lookupByName(vmid)
 
         try:
             set_metadata_res = vm.setMetadata(libvirt.VIR_DOMAIN_METADATA_ELEMENT,
                                               xml,
-                                              (metadata_params['key'] if (metadata_params and 'key' in metadata_params) else None),
-                                              (metadata_params['uri'] if (metadata_params and 'uri' in metadata_params) else None),
+                                              (other_params['metadata_ns_key'] if (other_params and 'metadata_ns_key' in other_params) else None),
+                                              (other_params['metadata_ns_uri'] if (other_params and 'metadata_ns_uri' in other_params) else None),
                                               flag)
             return {'changed': True, 'set_metadata': set_metadata_res}
         except libvirtError:
@@ -581,12 +581,12 @@ class Virt(object):
         self.__get_conn()
         return self.conn.update_device(vmid, xml, flags)
 
-    def set_metadata(self, vmid, xml, metadata_params, flags):
+    def set_metadata(self, vmid, xml, other_params, flags):
         """
         Set the metadata of the named guest
         """
         self.__get_conn()
-        return self.conn.set_metadata(vmid, xml, metadata_params, flags)
+        return self.conn.set_metadata(vmid, xml, other_params, flags)
 
     def define(self, xml):
         """
@@ -880,11 +880,11 @@ def core(module):
                 if not isinstance(res, dict):
                     res = {command: res}
 
-            elif command in ['attach_device', 'detach_device', 'update_device']:
+            elif command in ['attach_device', 'detach_device', 'update_device', 'set_metadata']:
                 if not module.params.get('xml', None):
-                    module.fail_json(msg="attach_device, update_device and detach_device require 'xml' argument.")
+                    module.fail_json(msg="attach_device, update_device, detach_device and set_metadata require 'xml' argument.")
 
-                if command == 'attach_device':
+                if command in ['attach_device', 'set_metadata']:
                     flags = ['affect_live', 'affect_config'] if not flags else flags
                     flag = 0
                     for item in flags:
@@ -895,7 +895,7 @@ def core(module):
 
                     # Not valid to affect a live machine if it's not running
                     if v.status(guest) != 'running':
-                        flag &= ~libvirt.VIR_DOMAIN_AFFECT_LIVE             # flag &= ~ENTRY_MODIFICATION_IMPACT_FLAGS_MAP.get('affect_live')
+                        flag &= ~ENTRY_MODIFICATION_IMPACT_FLAGS_MAP.get('affect_live')
 
                 elif command in ['detach_device', 'update_device']:
                     flags = ['device_modify_live', 'device_modify_config'] if not flags else flags
@@ -908,27 +908,12 @@ def core(module):
 
                     # Not valid to modify a live machine if it's not running
                     if v.status(guest) != 'running':
-                        flag &= ~libvirt.VIR_DOMAIN_DEVICE_MODIFY_LIVE      # flag &= ~ENTRY_DEVICE_MODIFY_FLAGS_MAP.get('device_modify_live')
+                        flag &= ~ENTRY_DEVICE_MODIFY_FLAGS_MAP.get('device_modify_live')
 
-                res = {command: getattr(v, command)(guest, module.params.get('xml', None), flag)}
-
-            elif command == 'set_metadata':
-                if not module.params.get('xml', None) or not module.params.get('metadata_params', None):
-                    module.fail_json(msg="set_metadata requires 'xml' and 'metadata_params' arguments.")
-                else:
-                    flags = ['affect_live', 'affect_config'] if not flags else flags
-                    flag = 0
-                    for item in flags:
-                        if item in ENTRY_MODIFICATION_IMPACT_FLAGS_MAP.keys():
-                            flag += ENTRY_MODIFICATION_IMPACT_FLAGS_MAP.get(item)
-                        else:
-                            module.warn("invalid flag argument (%s)." % item)
-
-                    # Not valid to affect a live machine if it's not running
-                    if v.status(guest) != 'running':
-                        flag &= ~libvirt.VIR_DOMAIN_AFFECT_LIVE             # flag &= ~ENTRY_MODIFICATION_IMPACT_FLAGS_MAP.get('affect_live')
-
-                res = {command: getattr(v, command)(guest, module.params.get('xml', None), module.params.get('metadata_params', None), flag)}
+                if command in ['attach_device', 'detach_device', 'update_device']:
+                    res = {command: getattr(v, command)(guest, module.params.get('xml', None), flag)}
+                elif command in ['set_metadata']:
+                    res = {command: getattr(v, command)(guest, module.params.get('xml', None), module.params.get('other_params', None), flag)}
 
             else:
                 res = getattr(v, command)(guest)
@@ -961,7 +946,7 @@ def main():
             uri=dict(type='str', default='qemu:///system'),
             xml=dict(type='str'),
             mutate_flags=dict(type='list', elements='str', choices=MUTATE_FLAGS, default=['ADD_UUID']),
-            metadata_params=dict(type='dict')
+            other_params=dict(type='dict')
         ),
     )
 
