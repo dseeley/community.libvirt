@@ -752,7 +752,7 @@ def handle_define(module, v):
                         })
                     except IndexError:
                         module.warn("Could not fuzzy match interface %i of incoming XML." % (
-                                interface.getparent().index(interface) + 1
+                            interface.getparent().index(interface) + 1
                         ))
 
     try:
