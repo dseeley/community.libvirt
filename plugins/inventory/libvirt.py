@@ -6,7 +6,7 @@ DOCUMENTATION = r'''
 name: libvirt
 extends_documentation_fragment:
     - constructed
-#    - community.libvirt.requirements
+    - community.libvirt.requirements
 short_description: Libvirt inventory source
 description:
     - Get libvirt guests in an inventory source.
