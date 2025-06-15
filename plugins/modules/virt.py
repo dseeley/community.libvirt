@@ -176,7 +176,7 @@ VIRT_SUCCESS = 0
 VIRT_UNAVAILABLE = 2
 
 ALL_COMMANDS = []
-VM_COMMANDS = ['create', 'define', 'destroy', 'get_xml', 'pause', 'shutdown', 'status', 'start', 'stop', 'undefine', 'unpause',
+VM_COMMANDS = ['create', 'define', 'destroy', 'get_xml', 'get_interfaces', 'pause', 'shutdown', 'status', 'start', 'stop', 'undefine', 'unpause', 'uuid']
                'get_guest_agent_info', 'attach_device', 'detach_device', 'update_device', 'set_metadata']
 HOST_COMMANDS = ['freemem', 'info', 'list_vms', 'nodeinfo', 'virttype']
 ALL_COMMANDS.extend(VM_COMMANDS)
@@ -883,6 +883,9 @@ def core(module):
                 res = getattr(v, command)(guest, flag)
                 if not isinstance(res, dict):
                     res = {command: res}
+
+            elif command == 'uuid':
+                res = {'uuid': v.get_uuid(guest)}
 
             elif command in ['attach_device', 'detach_device', 'update_device', 'set_metadata']:
                 if not module.params.get('xml', None):
