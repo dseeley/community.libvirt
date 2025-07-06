@@ -1,7 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# (c) 2022, Dougal Seeley <git@dougalseeley.com>
+# (c) 2015, Maciej Delmanowski <drybjed@gmail.com>
+# (c) 2025, Dougal Seeley <git@dougalseeley.com>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -12,6 +13,8 @@ DOCUMENTATION = '''
 module: virt_volume
 version_added: '1.4.0'
 author:
+  - Leonardo Galli (@galli-leo)
+  - Niclas Kretschmer (@NK308)
   - Dougal Seeley (@dseeley)
 short_description: Manage libvirt volumes inside a storage pool
 description:
@@ -201,9 +204,20 @@ class LibvirtConnection(object):
                     clone_source_vol_ptr = self.pool_ptr.storageVolLookupByName(clone_source)
                     createdStorageVolPtr = self.pool_ptr.createXMLFrom(xml, clone_source_vol_ptr, 0)
 
-                    if xml_etree.xpath("/volume/capacity[@unit=\"bytes\"]"):
-                        size_bytes = xml_etree.xpath("/volume/capacity[@unit=\"bytes\"]")[0].text
-                        createdStorageVolPtr.resize(int(size_bytes))
+                    if xml_etree.xpath("/volume/capacity"):
+                        capacity_elem = xml_etree.xpath("/volume/capacity")[0]
+                        unit = capacity_elem.get("unit", "bytes").lower()
+
+                        # Conversion factors to bytes
+                        unit_factors = { "bytes": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4 }
+
+                        # Convert size to bytes
+                        try:
+                            size_bytes = int(float(capacity_elem.text) * unit_factors.get(unit, 1))
+                        except (ValueError, KeyError):
+                            raise Exception(f"Unknown or invalid unit for capacity: {unit}")
+
+                        createdStorageVolPtr.resize(size_bytes)
 
                     isChanged = True
                 else:
