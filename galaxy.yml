@@ -1,6 +1,6 @@
 namespace: dseeley
 name: libvirt
-version: 1.4.1
+version: 2.0.1
 readme: README.md
 authors:
   - Ansible (https://github.com/ansible)

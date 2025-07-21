@@ -86,15 +86,15 @@ EXAMPLES = '''
     pool: default
     xml: |
       <volume>
-        <name>testing-volume</name>
-        <allocation>0</allocation>
-        <capacity unit="M">10</capacity>
-        <target>
-          <permissions>
-            <mode>0644</mode>
-            <label>virt_image_t</label>
-          </permissions>
-        </target>
+      <name>testing-volume</name>
+      <allocation>0</allocation>
+      <capacity unit="M">10</capacity>
+      <target>
+        <permissions>
+          <mode>0644</mode>
+          <label>virt_image_t</label>
+        </permissions>
+      </target>
       </volume>
 
 - name: List volumes in default pool
@@ -209,7 +209,7 @@ class LibvirtConnection(object):
                         unit = capacity_elem.get("unit", "bytes").lower()
 
                         # Conversion factors to bytes
-                        unit_factors = { "bytes": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4 }
+                        unit_factors = {"bytes": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
 
                         # Convert size to bytes
                         try:

@@ -628,7 +628,6 @@ class Virt(object):
         self.__get_conn()
         return self.conn.get_MaxMemory(vmid)
 
-
     def define(self, xml):
         """
         Define a guest with the given xml
