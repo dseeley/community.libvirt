@@ -37,6 +37,7 @@ options:
         in the XML (if a C(name) parameter is provided, it is ignored). C(xml) must be provided.
       - If C(absent), Deletes the volume specified by C(name) from the storage pool.  If C(wipe) is set to C(true), the volume will be wiped before deletion.
       - Mutually exclusive with C(command).
+      - Can be used to resize existing volumes if C(xml) has bigger capacity than current volume capacity.
     type: str
   command:
     choices: [ "create", "delete", "wipe", "list_volumes", "get_xml", "create_cidata_cdrom" ]
@@ -97,6 +98,12 @@ EXAMPLES = '''
       </target>
       </volume>
 
+- name: Create a volume from a template
+  community.libvirt.virt_volume:
+    pool: default
+    xml: "{{ lookup('ansible.builtin.template', 'volume-template.xml.j2') }}"
+    state: present
+
 - name: List volumes in default pool
   community.libvirt.virt_volume:
     pool: default
@@ -152,6 +159,25 @@ EXAMPLES = '''
   register: r__virt_volume__create_cidata_cdrom
 '''
 
+RETURN = r"""
+type:
+  description: When I(command=list_volumes) returns the type of the volume based on the underlying type of the pool.
+  returned: success
+  type: str
+  sample: "file"
+capacity:
+  description: When I(command=list_volumes) returns the total capacity of the volume in bytes.
+  returned: success
+  type: int
+  sample: "8589934592"
+allocation:
+  description: When I(command=list_volumes) returns the current allocated size of the volume in bytes.
+  returned: success
+  type: int
+  sample: "2740523008"
+"""
+
+from ansible_collections.community.libvirt.plugins.module_utils.constants import VOLUME_TYPE_INFO_MAP
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 import traceback
 
@@ -166,6 +192,26 @@ try:
     LXML_IMPORT_ERR = None
 except ImportError as lxml_import_exception:
     LXML_IMPORT_ERR = lxml_import_exception
+
+
+def _get_volume_size(capacity_elem):
+    """ Get volume size from xml definition
+
+    :param capacity_elem: lxml.etree._Element to parse for the capacity value
+    """
+    unit = capacity_elem.get("unit", "bytes").lower()
+
+    # Conversion factors to bytes
+    unit_factors = {
+        "bytes": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+
+    # Convert size to bytes
+    try:
+        size_bytes = int(float(capacity_elem.text) * unit_factors.get(unit, 1))
+    except (ValueError, KeyError) as exc:
+        raise ValueError(
+            f"Unknown or invalid unit for capacity: {unit}") from exc
+    return size_bytes
 
 
 class LibvirtConnection(object):
@@ -200,33 +246,24 @@ class LibvirtConnection(object):
                     # Ensure clone_source is valid
                     if not self.pool_ptr.storageVolLookupByName(clone_source):
                         raise libvirt.libvirtError("Clone source volume '%s' does not exist." % clone_source)
-
                     clone_source_vol_ptr = self.pool_ptr.storageVolLookupByName(clone_source)
                     createdStorageVolPtr = self.pool_ptr.createXMLFrom(xml, clone_source_vol_ptr, 0)
-
-                    if xml_etree.xpath("/volume/capacity"):
-                        capacity_elem = xml_etree.xpath("/volume/capacity")[0]
-                        unit = capacity_elem.get("unit", "bytes").lower()
-
-                        # Conversion factors to bytes
-                        unit_factors = {"bytes": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
-
-                        # Convert size to bytes
-                        try:
-                            size_bytes = int(float(capacity_elem.text) * unit_factors.get(unit, 1))
-                        except (ValueError, KeyError):
-                            raise Exception(f"Unknown or invalid unit for capacity: {unit}")
-
-                        createdStorageVolPtr.resize(size_bytes)
-
                     isChanged = True
                 else:
                     # If no clone_source is provided, just create an empty volume
                     createdStorageVolPtr = self.pool_ptr.createXML(xml)
-
                     isChanged = True
             else:
                 raise e
+
+        if xml_etree.xpath("/volume/capacity"):
+            size_bytes = _get_volume_size(
+                xml_etree.xpath("/volume/capacity")[0])
+            # https://libvirt.org/html/libvirt-libvirt-storage.html#virStorageVolInfo
+            created_volume_size_bytes = createdStorageVolPtr.info()[1]
+            if created_volume_size_bytes != size_bytes:
+                createdStorageVolPtr.resize(size_bytes)
+                isChanged = True
 
         result = {'changed': isChanged, 'res': {'XMLDesc': createdStorageVolPtr.XMLDesc(0),
                                                 'name': createdStorageVolPtr.name(),
@@ -347,7 +384,14 @@ class LibvirtConnection(object):
         """ List all volumes in the storage pool (https://libvirt.org/html/libvirt-libvirt-storage.html#virStoragePoolListAllVolumes) """
         results = []
         for entry in self.pool_ptr.listAllVolumes():
-            results.append({'name': entry.name(), 'path': entry.path(), 'key': entry.key(), 'XMLDesc': entry.XMLDesc(0), 'info': entry.info()})
+            results.append({'name': entry.name(),
+                            'path': entry.path(),
+                            'key': entry.key(),
+                            'XMLDesc': entry.XMLDesc(0),
+                            'capacity': entry.info()[1],
+                            'allocation': entry.info()[2],
+                            'type': VOLUME_TYPE_INFO_MAP.get(entry.info()[0], 'unknown'),
+                            'info': entry.info()})
         return {'changed': False, 'res': results}
 
 
