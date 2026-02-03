@@ -36,7 +36,7 @@ variables:
 resources:
   containers:
     - container: default
-      image: quay.io/ansible/azure-pipelines-test-container:6.0.0
+      image: quay.io/ansible/azure-pipelines-test-container:7.0.0
 
 pool: Standard
 
@@ -113,12 +113,12 @@ stages:
         parameters:
           testFormat: devel/linux/{0}/1
           targets:
-            - name: Fedora 41
-              test: fedora41
+            - name: Fedora 43
+              test: fedora43
             - name: Ubuntu 22.04
               test: ubuntu2204
 
-   stage: Docker_2_20
+  - stage: Docker_2_20
     displayName: Docker 2.20
     dependsOn: []
     jobs:
@@ -126,8 +126,8 @@ stages:
         parameters:
           testFormat: 2.20/linux/{0}/1
           targets:
-            - name: Fedora 41
-              test: fedora41
+            - name: Fedora 42
+              test: fedora42
             - name: Ubuntu 22.04
               test: ubuntu2204
 
