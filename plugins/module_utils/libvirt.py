@@ -192,3 +192,69 @@ class LibvirtConnection(object):
             disk_volumes = self.conn.storageVolLookupByPath(disk_path)
             if disk_volumes:
                 disk_volumes.delete()
+
+    # This needs the guest powered on, 'qemu-guest-agent' installed and the org.qemu.guest_agent.0 channel configured.
+    def get_guestInfo(self, vmid):
+        vm = self.conn.lookupByName(vmid)
+        res = {'changed:': False, 'guest_agent_info': {}}
+
+        try:
+            domain_guestInfo = vm.guestInfo(types=0)
+        except Exception as e:
+            domain_guestInfo = {"Error": str(e)}
+        finally:
+            res['guest_agent_info'].update({'guestInfo': domain_guestInfo})
+
+        try:
+            domain_interfaceAddresses = vm.interfaceAddresses(source=libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT)
+        except Exception as e:
+            domain_interfaceAddresses = {"Error": str(e)}
+        finally:
+            res['guest_agent_info'].update({'interfaceAddresses': domain_interfaceAddresses})
+
+        return res
+
+    def attach_device(self, vmid, xml, flag):
+        vm = self.conn.lookupByName(vmid)
+        try:
+            attach_res = vm.attachDeviceFlags(xml, flag)
+            return {'changed': True, 'attach_device': {'rc': attach_res}}
+        except Exception:
+            raise
+
+    def detach_device(self, vmid, xml, flag):
+        vm = self.conn.lookupByName(vmid)
+        try:
+            detach_res = vm.detachDeviceFlags(xml, flag)
+            return {'changed': True, 'detach_device': {'rc': detach_res}}
+        except Exception as e:
+            if e.get_error_code() == libvirt.VIR_ERR_DEVICE_MISSING:
+                return {'changed': False, 'detach_device': {'Error': 'libvirt.VIR_ERR_DEVICE_MISSING: %s' % (e.get_error_message())}}
+            else:
+                raise
+
+    def update_device(self, vmid, xml, flag):
+        vm = self.conn.lookupByName(vmid)
+
+        try:
+            update_res = vm.updateDeviceFlags(xml, flag)
+            return {'changed': True, 'update_device': update_res}
+        except Exception as e:
+            if e.get_error_code() == libvirt.VIR_ERR_INVALID_ARG:
+                return {'changed': False, 'detach_device': {'Error': 'libvirt.VIR_ERR_INVALID_ARG: %s' % (e.get_error_message())}}
+            else:
+                raise
+
+    def set_metadata(self, vmid, xml, other_params, flag):
+        vm = self.conn.lookupByName(vmid)
+
+        try:
+            set_metadata_res = vm.setMetadata(libvirt.VIR_DOMAIN_METADATA_ELEMENT,
+                                              xml,
+                                              (other_params['metadata_ns_key'] if (other_params and 'metadata_ns_key' in other_params) else None),
+                                              (other_params['metadata_ns_uri'] if (other_params and 'metadata_ns_uri' in other_params) else None),
+                                              flag)
+            return {'changed': True, 'set_metadata': set_metadata_res}
+        except Exception:
+            raise
+

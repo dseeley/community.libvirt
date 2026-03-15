@@ -157,7 +157,11 @@ status:
 import traceback
 
 from ansible_collections.community.libvirt.plugins.module_utils.libvirt import (
-    VIRT_STATE_NAME_MAP, VMNotFound, LibvirtConnection, VIRT_SUCCESS
+    VIRT_STATE_NAME_MAP, VMNotFound, VIRT_SUCCESS
+)
+
+from ansible_collections.dseeley.libvirt.plugins.module_utils.libvirt import (
+    LibvirtConnection
 )
 
 try:
