@@ -18,14 +18,16 @@ description:
      - Manages virtual machines supported by I(libvirt).
 options:
     flags:
-        choices: [ 'managed_save', 'snapshots_metadata', 'nvram', 'keep_nvram', 'checkpoints_metadata', 'delete_volumes']
+        choices: [ 'managed_save', 'snapshots_metadata', 'nvram', 'keep_nvram', 'checkpoints_metadata', 'delete_volumes', 'lease', 'agent', 'arp']
         description:
             - Pass additional parameters.
-            - Currently only implemented with command C(undefine).
+            - Currently only implemented with command C(undefine) and C(get_ifaddresses).
               Specify which metadata should be removed with C(undefine).
               Useful option to be able to C(undefine) guests with UEFI nvram.
               C(nvram) and C(keep_nvram) are conflicting and mutually exclusive.
               Consider option C(force) if all related metadata should be removed.
+              Specify which method to use when getting guest interface addresses using C(get_ifaddresses)
+              from either "lease", "agent" or "arp" (if list provided only first value is used).
         type: list
         elements: str
     force:
@@ -183,8 +185,11 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.common.text.converters import to_native
 
 ALL_COMMANDS = []
-VM_COMMANDS = ['create', 'define', 'destroy', 'get_xml', 'get_interfaces', 'pause', 'shutdown', 'status', 'start', 'stop', 'undefine', 'unpause', 'uuid',
-               'get_guest_agent_info', 'attach_device', 'detach_device', 'update_device', 'set_metadata']
+VM_COMMANDS = [
+    'create', 'define', 'destroy', 'get_xml', 'get_interfaces', 'get_ifaddresses', 'pause', 'shutdown', 'status',
+    'start', 'stop', 'undefine', 'unpause', 'uuid',
+    'get_guest_agent_info', 'attach_device', 'detach_device', 'update_device', 'set_metadata'
+]
 HOST_COMMANDS = ['freemem', 'info', 'list_vms', 'nodeinfo', 'virttype']
 ALL_COMMANDS.extend(VM_COMMANDS)
 ALL_COMMANDS.extend(HOST_COMMANDS)
@@ -196,6 +201,9 @@ ENTRY_UNDEFINE_FLAGS_MAP = {
     'keep_nvram': 8,
     'checkpoints_metadata': 16,
     'delete_volumes': 32,
+    'lease': 64,
+    'agent': 128,
+    'arp': 256
 }
 
 ENTRY_MODIFICATION_IMPACT_FLAGS_MAP = {
@@ -413,6 +421,13 @@ class Virt(object):
     def get_uuid(self, vmid):
         self.__get_conn()
         return self.conn.get_uuid(vmid)
+
+    def get_ifaddresses(self, vmid, flag):
+        """
+        Get Interface Name and Mac Address from xml
+        """
+        self.__get_conn()
+        return self.conn.get_ifaddresses(vmid, flag)
 
     def get_interfaces(self, vmid):
         """
@@ -772,6 +787,8 @@ def core(module):
 
             elif command == 'uuid':
                 res = {'uuid': v.get_uuid(guest)}
+            elif command == 'get_ifaddresses':
+                res = v.get_ifaddresses(guest, flags[0])
             elif command in ['attach_device', 'detach_device', 'update_device', 'set_metadata']:
                 if not module.params.get('xml', None):
                     module.fail_json(msg="attach_device, update_device, detach_device and set_metadata require 'xml' argument.")

@@ -1,6 +1,6 @@
 namespace: dseeley
 name: libvirt
-version: 2.2.1
+version: 2.3.1
 readme: README.md
 authors:
   - Ansible (https://github.com/ansible)
@@ -15,3 +15,6 @@ repository: https://github.com/dseeley/community.libvirt
 documentation: https://docs.ansible.com/ansible/latest/collections/community/libvirt/index.html
 homepage: https://github.com/ansible-collections/community.libvirt
 issues: https://github.com/ansible-collections/community.libvirt/issues
+
+dependencies:
+  community.libvirt: ">=2.3.0"
