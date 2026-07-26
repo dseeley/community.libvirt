@@ -746,17 +746,18 @@ def update_virtinst_params(module, virtInstall, system_disk, extra_user_data=Non
         if virtInstall.params.get('cloud_init') is None:
             virtInstall.params['cloud_init'] = {}
 
-        orignal_user_data = virtInstall.params['cloud_init'].get('user_data', "")
+        original_user_data = virtInstall.params['cloud_init'].get('user_data', "")
 
-        if isinstance(orignal_user_data, dict):
+        if isinstance(original_user_data, dict):
             try:
                 import yaml
-                orignal_user_data = yaml.safe_dump(orignal_user_data, default_flow_style=False, allow_unicode=True)
+                original_user_data = "#cloud-config\n" + yaml.safe_dump(
+                    original_user_data, default_flow_style=False, allow_unicode=True)
             except ImportError:
                 module.fail_json(
                     msg="PyYAML is required to process dictionary cloud-init parameters")
 
-        modified_user_data = orignal_user_data + extra_user_data
+        modified_user_data = original_user_data + extra_user_data
         virtInstall.params['cloud_init']['user_data'] = modified_user_data
 
 
@@ -805,7 +806,6 @@ def core(module):
     if not base_image:
         module.fail_json(msg="base_image parameter is required")
 
-    vm_exists = False
     try:
         vm = virtConn.find_vm(name)
         vm_exists = True
@@ -857,8 +857,14 @@ def core(module):
         result.update(extra_res)
 
         if wait_for_cloud_init_reboot and rc == 0:
-            virtConn.create(name)
-
+            # check if vm exists again after creation
+            try:
+                vm = virtConn.find_vm(name)
+                vm_exists = True
+            except VMNotFound:
+                vm_exists = False
+            if vm_exists and not vm.isActive() and not module.check_mode:
+                virtConn.create(name)
         return rc, result
     elif state == 'absent':
         if not vm_exists:

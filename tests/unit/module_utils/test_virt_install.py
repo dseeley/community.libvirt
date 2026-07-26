@@ -9,7 +9,8 @@ import shutil
 
 from ansible_collections.community.libvirt.tests.unit.compat import mock
 from ansible_collections.community.libvirt.plugins.module_utils.virt_install import (
-    _dict2options, _get_option_mapping, OPTION_BOOL_ONOFF, VirtInstallTool)
+    _dict2options, _get_option_mapping, OPTION_BOOL_ONOFF, VirtInstallTool,
+    get_install_args)
 
 
 class TestDict2Options(unittest.TestCase):
@@ -286,6 +287,21 @@ class TestDict2Options(unittest.TestCase):
 
         for part in expected_parts:
             self.assertIn(part, result)
+
+
+class TestGetInstallArgs(unittest.TestCase):
+
+    def test_install_os_not_required(self):
+        args = get_install_args()
+        install_options = args['install']['options']
+        self.assertTrue(
+            install_options['os'].get('required', False) is not True,
+            "install.os should not be marked as required")
+
+    def test_no_install_option_exists(self):
+        args = get_install_args()
+        install_options = args['install']['options']
+        self.assertIn('no_install', install_options)
 
 
 class TestPrimaryValueFeature(unittest.TestCase):
@@ -1071,6 +1087,30 @@ class TestBuildCommand(unittest.TestCase):
         self.assertIn('readonly=no', disk_args[1])
         self.assertIn('shareable=yes', disk_args[1])
 
+    def test_disk_wwn_parameter(self):
+        """Test that wwn parameter is passed through to --disk argument"""
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'disks': [
+                {
+                    'size': 20,
+                    'bus': 'scsi',
+                    'wwn': '0x5000c50015ea71ad'
+                }
+            ]
+        }
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        disk_args = []
+        for i, arg in enumerate(self.virt_install.command_argv):
+            if arg == '--disk' and i + 1 < len(self.virt_install.command_argv):
+                disk_args.append(self.virt_install.command_argv[i + 1])
+
+        self.assertEqual(len(disk_args), 1)
+        self.assertIn('wwn=0x5000c50015ea71ad', disk_args[0])
+
     def test_network_configuration(self):
         """Test network configuration"""
         self.mock_module.params = {
@@ -1130,6 +1170,157 @@ class TestBuildCommand(unittest.TestCase):
 
         self.assertEqual(len(network_args), 1)
         self.assertEqual(network_args[0], 'none')
+
+    def test_network_passt_shorthand(self):
+        """Test passt network shorthand via value primary key"""
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'networks': [
+                {
+                    'value': 'passt',
+                    'port_forward': ['8080:80', '3478/udp', '2222:22']
+                }
+            ]
+        }
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        network_args = []
+        for i, arg in enumerate(self.virt_install.command_argv):
+            if arg == '--network' and i + 1 < len(self.virt_install.command_argv):
+                network_args.append(self.virt_install.command_argv[i + 1])
+
+        self.assertEqual(len(network_args), 1)
+        self.assertTrue(network_args[0].startswith('passt'))
+        self.assertIn('portForward0=8080:80', network_args[0])
+        self.assertIn('portForward1=3478/udp', network_args[0])
+        self.assertIn('portForward2=2222:22', network_args[0])
+
+    def test_network_passt_shorthand_no_port_forward(self):
+        """Test passt shorthand without port forwarding"""
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'networks': [
+                {'value': 'passt'}
+            ]
+        }
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        network_args = []
+        for i, arg in enumerate(self.virt_install.command_argv):
+            if arg == '--network' and i + 1 < len(self.virt_install.command_argv):
+                network_args.append(self.virt_install.command_argv[i + 1])
+
+        self.assertEqual(len(network_args), 1)
+        self.assertEqual(network_args[0], 'passt')
+
+    def test_network_user_type_with_backend(self):
+        """Test structured user/passt network with backend options"""
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'networks': [
+                {
+                    'type': 'user',
+                    'backend': {
+                        'type': 'passt',
+                        'log_file': '/tmp/passt.log'
+                    },
+                    'port_forward': ['8080:80']
+                }
+            ]
+        }
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        network_args = []
+        for i, arg in enumerate(self.virt_install.command_argv):
+            if arg == '--network' and i + 1 < len(self.virt_install.command_argv):
+                network_args.append(self.virt_install.command_argv[i + 1])
+
+        self.assertEqual(len(network_args), 1)
+        self.assertIn('type=user', network_args[0])
+        self.assertIn('backend.type=passt', network_args[0])
+        self.assertIn('backend.logFile=/tmp/passt.log', network_args[0])
+        self.assertIn('portForward0=8080:80', network_args[0])
+
+    def test_network_existing_forms_unchanged(self):
+        """Test backward compatibility — existing network forms still work"""
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'networks': [
+                {
+                    'network': 'default',
+                    'model': {'type': 'virtio'},
+                    'mac': {'address': '52:54:00:12:34:56'}
+                },
+                {
+                    'bridge': 'br0',
+                    'model': {'type': 'e1000'},
+                    'trust_guest_rx_filters': True
+                }
+            ]
+        }
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        network_args = []
+        for i, arg in enumerate(self.virt_install.command_argv):
+            if arg == '--network' and i + 1 < len(self.virt_install.command_argv):
+                network_args.append(self.virt_install.command_argv[i + 1])
+
+        self.assertEqual(len(network_args), 2)
+        self.assertIn('network=default', network_args[0])
+        self.assertIn('model.type=virtio', network_args[0])
+        self.assertIn('mac.address=52:54:00:12:34:56', network_args[0])
+        self.assertIn('bridge=br0', network_args[1])
+        self.assertIn('model.type=e1000', network_args[1])
+        self.assertIn('trustGuestRxFilters=yes', network_args[1])
+
+    def test_network_conflicting_selectors_rejected(self):
+        """Test that conflicting network selectors are rejected"""
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'networks': [
+                {
+                    'value': 'passt',
+                    'network': 'default',
+                    'port_forward': ['8080:80']
+                }
+            ]
+        }
+        self.mock_module.fail_json = mock.Mock()
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        self.mock_module.fail_json.assert_called_once()
+        args, kwargs = self.mock_module.fail_json.call_args
+        self.assertIn('conflicting', kwargs['msg'])
+
+    def test_network_passt_with_bridge_rejected(self):
+        """Test that value:passt combined with bridge is rejected"""
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'networks': [
+                {
+                    'value': 'passt',
+                    'bridge': 'br0'
+                }
+            ]
+        }
+        self.mock_module.fail_json = mock.Mock()
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        self.mock_module.fail_json.assert_called_once()
+        args, kwargs = self.mock_module.fail_json.call_args
+        self.assertIn('conflicting', kwargs['msg'])
 
     def test_graphics_configuration(self):
         """Test graphics configuration"""
@@ -2082,6 +2273,7 @@ class TestBuildCommand(unittest.TestCase):
             yaml_content = f.read()
 
         # Verify the YAML contains expected content
+        self.assertTrue(yaml_content.startswith('#cloud-config\n'))
         self.assertIn('users:', yaml_content)
         self.assertIn('name: admin', yaml_content)
         self.assertIn('sudo: ALL=(ALL) NOPASSWD:ALL', yaml_content)
@@ -2093,6 +2285,41 @@ class TestBuildCommand(unittest.TestCase):
         self.assertIn('runcmd:', yaml_content)
         self.assertIn('- systemctl enable nginx', yaml_content)
         self.assertIn('- systemctl start nginx', yaml_content)
+
+    def test_cloud_init_string_user_data_kept_unchanged(self):
+        """Test cloud-init configuration with string user_data."""
+        user_data_content = "users:\n  - name: admin\n"
+        self.mock_module.params = {
+            'name': 'test-vm',
+            'memory': 2048,
+            'cloud_init': {
+                'user_data': user_data_content
+            }
+        }
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install._build_command()
+
+        # Verify that the command was built successfully
+        self.assertIn('--cloud-init', self.virt_install.command_argv)
+
+        # Find the cloud-init argument value
+        cloud_init_idx = self.virt_install.command_argv.index('--cloud-init')
+        self.assertLess(cloud_init_idx + 1, len(self.virt_install.command_argv))
+
+        # The user-data should be a file path, not the raw content
+        cloud_init_value = self.virt_install.command_argv[cloud_init_idx + 1]
+        self.assertIn('user-data=', cloud_init_value)
+
+        # Extract the file path and verify its contents
+        user_data_path = cloud_init_value.split('user-data=')[1].split(',')[0]
+        self.assertTrue(user_data_path.startswith(self.mock_module.tmpdir))
+
+        # Read and verify string content is kept as-is
+        with open(user_data_path, 'r') as f:
+            rendered_user_data = f.read()
+
+        self.assertEqual(rendered_user_data, user_data_content)
+        self.assertFalse(rendered_user_data.startswith('#cloud-config\n'))
 
     def test_cloud_init_mixed_dict_and_string(self):
         """Test cloud-init configuration with mixed dictionary and string inputs"""
@@ -2153,6 +2380,7 @@ class TestBuildCommand(unittest.TestCase):
 
         with open(user_data_path, 'r') as f:
             user_data_yaml = f.read()
+        self.assertTrue(user_data_yaml.startswith('#cloud-config\n'))
         self.assertIn('users:', user_data_yaml)
         self.assertIn('name: admin', user_data_yaml)
         self.assertIn('sudo: ALL=(ALL) NOPASSWD:ALL', user_data_yaml)
@@ -2233,6 +2461,7 @@ class TestBuildCommand(unittest.TestCase):
             user_data_yaml = f.read()
 
         # Check user data structure
+        self.assertTrue(user_data_yaml.startswith('#cloud-config\n'))
         self.assertIn('ssh_pwauth: false', user_data_yaml)
         self.assertIn('disable_root: true', user_data_yaml)
         self.assertIn('users:', user_data_yaml)
@@ -2295,6 +2524,43 @@ class TestVirtInstallToolExecute(unittest.TestCase):
         called_args = self.mock_module.run_command.call_args[0][0]
         self.assertIn('virt-install', called_args)
         self.assertIn('--noautoconsole', called_args)
+
+    def test_execute_wait_timeout_rounds_up_to_minutes(self):
+        """Test wait_timeout (seconds) is rounded up to whole minutes"""
+        self.mock_module.run_command.return_value = (
+            0, "Domain installation proceeding...", "")
+
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install.execute(wait_timeout=90)
+
+        called_args = self.mock_module.run_command.call_args[0][0]
+        self.assertIn('--wait', called_args)
+        # 90 seconds -> ceil(90/60) = 2 minutes
+        wait_index = called_args.index('--wait')
+        self.assertEqual(called_args[wait_index + 1], '2')
+
+    def test_execute_wait_timeout_whole_minutes(self):
+        """Test wait_timeout that is an exact multiple of 60"""
+        self.mock_module.run_command.return_value = (
+            0, "Domain installation proceeding...", "")
+
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install.execute(wait_timeout=120)
+
+        called_args = self.mock_module.run_command.call_args[0][0]
+        wait_index = called_args.index('--wait')
+        self.assertEqual(called_args[wait_index + 1], '2')
+
+    def test_execute_no_wait_timeout_omits_wait_flag(self):
+        """Test that omitting wait_timeout does not add --wait"""
+        self.mock_module.run_command.return_value = (
+            0, "Domain installation proceeding...", "")
+
+        self.virt_install = VirtInstallTool(self.mock_module)
+        self.virt_install.execute()
+
+        called_args = self.mock_module.run_command.call_args[0][0]
+        self.assertNotIn('--wait', called_args)
 
     def test_execute_failure(self):
         """Test failed execution"""

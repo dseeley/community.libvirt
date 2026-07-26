@@ -260,8 +260,7 @@ class VirtInstallTool(object):
         return combined_items
 
     def _convert_raw_to_string(self, value):
-        """Convert raw type parameter (str or dict) to string content.
-        """
+        """Convert raw type parameter (str or dict) to string content."""
         if isinstance(value, str):
             return value
         elif isinstance(value, dict):
@@ -518,7 +517,10 @@ class VirtInstallTool(object):
                 cloud_init_params['meta-data'] = self._save_string_to_tempfile(meta_data_content)
                 del cloud_init_params['meta_data']
             if cloud_init_params.get('user_data'):
-                user_data_content = self._convert_raw_to_string(cloud_init_params['user_data'])
+                raw_user_data = cloud_init_params['user_data']
+                user_data_content = self._convert_raw_to_string(raw_user_data)
+                if isinstance(raw_user_data, dict):
+                    user_data_content = "#cloud-config\n" + user_data_content
                 cloud_init_params['user-data'] = self._save_string_to_tempfile(user_data_content)
                 del cloud_init_params['user_data']
 
@@ -595,6 +597,10 @@ class VirtInstallTool(object):
             network_mapping = {
                 'trust_guest_rx_filters': ('trustGuestRxFilters', None),
                 'state': ('link.state', None),
+                'port_forward': ('portForward', None),
+                'backend': ('backend', {
+                    'log_file': ('logFile', None),
+                }),
             }
             for network in network_param:
                 self._add_parameter('--network',
@@ -845,6 +851,21 @@ class VirtInstallTool(object):
                         self.module.fail_json(
                             msg="cloud_init.{} must be a string or dictionary, got {}".format(
                                 param_name, type(param_value).__name__))
+
+        self._validate_network_params()
+
+    def _validate_network_params(self):
+        networks = self.params.get('networks')
+        if not networks:
+            return
+
+        selectors = ['value', 'network', 'bridge', 'hostdev']
+        for net in networks:
+            present = [s for s in selectors if net.get(s)]
+            if len(present) > 1:
+                self.module.fail_json(
+                    msg="network entry specifies conflicting selectors: {}".format(
+                        ', '.join(present)))
 
     def _build_command(self):
         """Build the complete virt-install command"""
@@ -1387,7 +1408,7 @@ def get_install_args():
         install=dict(
             type='dict',
             options=dict(
-                os=dict(type='str', required=True),
+                os=dict(type='str'),
                 kernel=dict(type='str'),
                 initrd=dict(type='str'),
                 kernel_args=dict(type='str'),
@@ -1488,6 +1509,7 @@ def get_disks_args():
                 path=dict(type='str'),
                 pool=dict(type='str'),
                 vol=dict(type='str'),
+                wwn=dict(type='str'),
                 size=dict(type='int'),
                 sparse=dict(type='bool'),
                 format=dict(type='str'),
@@ -1573,7 +1595,8 @@ def get_networks_args():
             type='list',
             elements="dict",
             options=dict(
-                type=dict(type='str', choices=['direct']),
+                value=dict(type='str'),
+                type=dict(type='str', choices=['direct', 'user']),
                 network=dict(type='str'),
                 bridge=dict(type='str'),
                 hostdev=dict(type='str'),
@@ -1590,6 +1613,8 @@ def get_networks_args():
                 address=dict(type='dict'),
                 virtualport=dict(type='dict'),
                 trust_guest_rx_filters=dict(type='bool'),
+                backend=dict(type='dict'),
+                port_forward=dict(type='list', elements='str'),
             ),
         ),
     )
